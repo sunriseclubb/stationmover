@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Apple Music to Spotify</title>
+<style>
+:root{
+  --bg:#f2f5f7; --card:#ffffff; --ink:#101820; --muted:#55636f; --line:#cfd8df;
+  --accent:#0b6e4f; --accent-ink:#ffffff; --warn:#a23b1a; --ok:#0b6e4f; --field:#f7f9fa;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0e1317; --card:#151c22; --ink:#e8eef2; --muted:#93a1ac; --line:#26323b;
+    --accent:#3ddc97; --accent-ink:#06241a; --warn:#ff9b7a; --ok:#3ddc97; --field:#0f161b; }
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding:max(16px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom))}
+main{max-width:40rem;margin:0 auto}
+h1{font-size:1.75rem;line-height:1.15;letter-spacing:-.01em;margin:8px 0 6px}
+h2{font-size:1.1rem;margin:0 0 4px}
+p{margin:0 0 10px}
+.lede{color:var(--muted);margin-bottom:18px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+section.locked{opacity:.55}
+.muted{color:var(--muted);font-size:.92rem}
+label{display:block;font-weight:600;margin:12px 0 4px}
+input[type=text],textarea{width:100%;font:inherit;color:var(--ink);background:var(--field);
+  border:1px solid var(--line);border-radius:8px;padding:10px;-webkit-appearance:none}
+input[type=text]{font-size:16px}
+textarea{min-height:9rem;font-size:15px;font-family:ui-monospace,Menlo,monospace;resize:vertical}
+input[type=file]{width:100%;font:inherit;padding:8px 0}
+button{font:inherit;font-weight:600;border-radius:8px;border:1px solid var(--accent);
+  background:var(--accent);color:var(--accent-ink);padding:11px 16px;min-height:44px}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+button:disabled{opacity:.45}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.uri{display:flex;gap:8px;align-items:stretch;margin:6px 0 4px}
+.uri code{flex:1;min-width:0;overflow-wrap:anywhere;background:var(--field);border:1px solid var(--line);
+  border-radius:8px;padding:9px 10px;font-size:.9rem}
+.check{display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-weight:400}
+.check input{margin-top:5px;width:20px;height:20px;flex:none}
+details{margin:8px 0}
+summary{cursor:pointer;font-weight:600;padding:6px 0}
+pre{background:var(--field);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;font-size:.88rem;margin:6px 0}
+ol{padding-left:1.2rem;margin:6px 0}
+li{margin:4px 0}
+.bar{height:10px;background:var(--field);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:12px 0 6px}
+.bar>div{height:100%;width:0;background:var(--accent);transition:width .2s}
+.ok{color:var(--ok)} .err{color:var(--warn)}
+#log{max-height:9rem;overflow:auto;font-size:.85rem;color:var(--muted);white-space:pre-wrap}
+.hidden{display:none}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Apple Music to Spotify</h1>
+<p class="lede">Runs in your browser. Your song list goes from this page straight to Spotify and nowhere else. There are no song limits.</p>
+
+<section id="s1">
+  <h2>1. Connect Spotify</h2>
+  <p class="muted">One-time setup. You need Spotify Premium, because Spotify only lets Premium accounts create developer apps.</p>
+  <details>
+    <summary>How to get a Client ID</summary>
+    <ol>
+      <li>Open <b>developer.spotify.com/dashboard</b> and log in. On iPhone, use the aA menu in Safari and choose Request Desktop Website if the page looks cut off.</li>
+      <li>Create app. Any name and description. Under Redirect URIs, add the address below exactly as shown, including the final slash.</li>
+      <li>Tick Web API, save, then open the app's Settings and copy the Client ID.</li>
+    </ol>
+  </details>
+  <label>Redirect URI to register</label>
+  <div class="uri"><code id="redirect"></code><button class="ghost" id="copyRedirect" type="button">Copy</button></div>
+  <label for="clientId">Client ID</label>
+  <input type="text" id="clientId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Client ID">
+  <div class="row">
+    <button id="connectBtn" type="button">Connect Spotify</button>
+    <button id="disconnectBtn" class="ghost hidden" type="button">Disconnect</button>
+  </div>
+  <p id="connStatus" class="muted" role="status" style="margin-top:10px"></p>
+</section>
+
+<section id="s2" class="locked">
+  <h2>2. Add your songs</h2>
+  <p class="muted">Choose a file or paste the list.</p>
+  <input type="file" id="file" accept=".txt,.csv,.tsv,.json,text/plain,text/csv,application/json">
+  <label for="paste">Or paste here</label>
+  <textarea id="paste" spellcheck="false" placeholder="# Road trip&#10;Take On Me | a-ha | Hunting High and Low&#10;Africa | Toto"></textarea>
+  <p id="summary" class="muted" role="status" style="margin-top:8px"></p>
+  <details>
+    <summary>Accepted formats</summary>
+    <p>One song per line as <b>Title | Artist | Album</b> (album optional). A line starting with # begins a playlist, and the songs under it go in that playlist. Songs above the first # line go to Liked Songs.</p>
+    <pre># Road trip
+Take On Me | a-ha | Hunting High and Low
+Africa | Toto
+
+Not in a playlist | Some Artist</pre>
+    <p>Also accepted: CSV or tab-separated files with Name (or Title), Artist, and optionally Album and Playlist columns, text exported from the Music app on a Mac, and JSON.</p>
+  </details>
+</section>
+
+<section id="s3" class="locked">
+  <h2>3. Transfer</h2>
+  <label class="check"><input type="checkbox" id="optLoose" checked><span>Save songs that aren't in a playlist to Liked Songs</span></label>
+  <label class="check"><input type="checkbox" id="optAll"><span>Also save songs from playlists to Liked Songs</span></label>
+  <label class="check"><input type="checkbox" id="optPrivate" checked><span>Make new playlists private</span></label>
+  <p class="muted">Keep this page open with the screen on while it runs. iPhone pauses pages in the background. If it gets interrupted, open the page and press Start again: matches already found are kept.</p>
+  <div class="row">
+    <button id="startBtn" type="button" disabled>Start transfer</button>
+    <button id="stopBtn" class="ghost hidden" type="button">Stop</button>
+    <button id="resetBtn" class="ghost" type="button">Clear saved matches</button>
+  </div>
+  <div class="bar" aria-hidden="true"><div id="barFill"></div></div>
+  <p id="status" role="status" class="muted"></p>
+  <div id="log" aria-live="off"></div>
+</section>
+
+<section id="s4" class="hidden">
+  <h2>Results</h2>
+  <p id="resultText"></p>
+  <div id="unmatchedWrap" class="hidden">
+    <label for="unmatched">Songs I couldn't find on Spotify</label>
+    <textarea id="unmatched" readonly></textarea>
+    <div class="row"><button id="copyUnmatched" class="ghost" type="button">Copy list</button></div>
+  </div>
+</section>
+</main>
+
+<script>
+'use strict';
+/* ===================================================================
+   Pure logic: parsing, matching, Spotify client, transfer pipeline
+   =================================================================== */
+const THRESHOLD = 0.8;
+
+const stripMarks = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+function normTitle(s) {
+  s = stripMarks(String(s || '').toLowerCase());
+  s = s.replace(/\(.*?\)|\[.*?\]/g, ' ');
+  s = s.replace(/\s[-\u2013\u2014]\s.*(remaster|version|edit|mix|live|mono|stereo|deluxe).*$/, ' ');
+  s = s.replace(/\b(feat|ft|featuring)\.?\s.*$/, ' ');
+  s = s.replace(/['\u2019`]/g, '').replace(/&/g, ' and ');
+  s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function dice(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const A = new Set(a.split(' ')), B = new Set(b.split(' '));
+  let i = 0;
+  for (const w of A) if (B.has(w)) i++;
+  return (2 * i) / (A.size + B.size);
+}
+
+function artistList(s) {
+  return String(s || '')
+    .split(/\s*(?:,|;|&|\/|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\bx\b)\s*/i)
+    .map(normTitle).filter(Boolean);
+}
+
+function queryTitle(s) {
+  const t = String(s || '')
+    .replace(/\(.*?\)|\[.*?\]/g, ' ')
+    .replace(/\s[-\u2013\u2014]\s.*(remaster|version|edit|mix|live|mono|stereo|deluxe).*$/i, ' ')
+    .replace(/"/g, '').replace(/\s+/g, ' ').trim();
+  return t || String(s || '').replace(/"/g, '').trim();
+}
+
+function firstArtist(s) {
+  return String(s || '').split(/\s*(?:,|;|&|\bfeat\.?|\bft\.?|\bfeaturing\b)\s*/i)[0].replace(/"/g, '').trim();
+}
+
+function scoreCandidate(t, c) {
+  const nt = normTitle(t.title), ct = normTitle(c.name);
+  const titleScore = nt === ct ? 1 : dice(nt, ct);
+  const qa = artistList(t.artist);
+  let artistScore = 0.5;
+  if (qa.length) {
+    const ca = [].concat(...(c.artists || []).map(a => artistList(a.name)));
+    const matched = qa.filter(x => ca.some(y => x === y || dice(x, y) >= 0.8)).length;
+    artistScore = matched / qa.length;
+  }
+  let score = 0.65 * titleScore + 0.35 * artistScore;
+  if (t.album && c.album && c.album.name && normTitle(t.album) === normTitle(c.album.name)) score += 0.05;
+  return score;
+}
+
+function pickBest(t, candidates) {
+  let best = null;
+  for (const c of candidates || []) {
+    if (!c || !c.uri) continue;
+    const score = scoreCandidate(t, c);
+    if (!best || score > best.score) {
+      best = { uri: c.uri, name: c.name, artist: (c.artists || []).map(a => a.name).join(', '), score };
+    }
+  }
+  return best;
+}
+
+/* ---------- reading the song list ---------- */
+function decodeBuffer(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+  if (u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+  if (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) return new TextDecoder('utf-8').decode(u8.subarray(3));
+  return new TextDecoder('utf-8').decode(u8);
+}
+
+function parseDelimited(text, delim) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else if (c === '"' && cell === '') q = true;
+    else if (c === delim) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = ''; rows.push(row); row = [];
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ''));
+}
+
+const H_TITLE = /^(name|title|song|song name|track|track name|track title)$/;
+const H_ARTIST = /^(artist|artist name|artists|artist\(s\))$/;
+const H_ALBUM = /^(album|album name)$/;
+const H_PLAYLIST = /^(playlist|playlist name)$/;
+
+function parseTable(rows) {
+  const tracks = [], skipped = [];
+  let hi = -1, ti = -1, ai = -1;
+  for (let r = 0; r < Math.min(rows.length, 5); r++) {
+    const h = rows[r].map(x => x.trim().toLowerCase());
+    const t = h.findIndex(x => H_TITLE.test(x)), a = h.findIndex(x => H_ARTIST.test(x));
+    if (t >= 0 && a >= 0) { hi = r; ti = t; ai = a; break; }
+  }
+  if (hi < 0) return null;
+  const h = rows[hi].map(x => x.trim().toLowerCase());
+  const li = h.findIndex(x => H_ALBUM.test(x)), pi = h.findIndex(x => H_PLAYLIST.test(x));
+  for (let r = hi + 1; r < rows.length; r++) {
+    const row = rows[r];
+    const title = (row[ti] || '').trim(), artist = (row[ai] || '').trim();
+    if (!title) { skipped.push(row.join(' | ')); continue; }
+    tracks.push({
+      title, artist,
+      album: li >= 0 ? (row[li] || '').trim() : '',
+      playlist: pi >= 0 ? ((row[pi] || '').trim() || null) : null
+    });
+  }
+  return { tracks, skipped };
+}
+
+function parsePipe(lines) {
+  const tracks = [], skipped = []; let pl = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('#') && !line.includes('|')) { pl = line.replace(/^#+\s*/, '').trim() || null; continue; }
+    const p = line.split('|').map(s => s.trim());
+    if (p.length >= 2 && p[0] && p[1]) tracks.push({ title: p[0], artist: p[1], album: p[2] || '', playlist: pl });
+    else skipped.push(line);
+  }
+  return { tracks, skipped };
+}
+
+const J_TITLE = ['Title', 'Track Name', 'Song Name', 'Name', 'title', 'name', 'track_name', 'trackName', 'songName'];
+const J_ARTIST = ['Artist', 'Artist Name', 'Artists', 'artist', 'artistName', 'artist_name', 'Album Artist'];
+const J_ALBUM = ['Album', 'Album Name', 'album', 'albumName', 'album_name'];
+const firstStr = (o, keys) => { for (const k of keys) if (typeof o[k] === 'string' && o[k].trim()) return o[k].trim(); return ''; };
+
+function parseJSONData(data) {
+  const tracks = [];
+  (function walk(node, pl) {
+    if (Array.isArray(node)) { node.forEach(n => walk(n, pl)); return; }
+    if (!node || typeof node !== 'object') return;
+    const title = firstStr(node, J_TITLE), artist = firstStr(node, J_ARTIST);
+    if (title && artist) { tracks.push({ title, artist, album: firstStr(node, J_ALBUM), playlist: pl }); return; }
+    const name = firstStr(node, ['Playlist Name', 'playlist', 'Name', 'Title', 'name', 'title']);
+    const holdsList = Object.keys(node).some(k => /track|item|song/i.test(k) && Array.isArray(node[k]));
+    const next = holdsList && name ? name : pl;
+    for (const k of Object.keys(node)) walk(node[k], next);
+  })(data, null);
+  return { tracks, skipped: [] };
+}
+
+function parseInput(text) {
+  text = String(text || '').replace(/^\uFEFF/, '');
+  const t = text.trim();
+  if (!t) return { tracks: [], skipped: [] };
+  if (t[0] === '{' || t[0] === '[') { try { return parseJSONData(JSON.parse(t)); } catch (e) { /* not JSON */ } }
+  const lines = t.split(/\r\n|\r|\n/);
+  const first = lines.find(l => l.trim() && !(l.trim().startsWith('#') && !l.includes('|'))) || '';
+  for (const delim of ['\t', ',', ';']) {
+    if (first.includes(delim)) {
+      const res = parseTable(parseDelimited(t, delim));
+      if (res) return res;
+    }
+  }
+  return parsePipe(lines);
+}
+
+/* ---------- Spotify client ---------- */
+const mem = {};
+const store = {
+  get(k, d = null) {
+    try { const v = localStorage.getItem(k); if (v !== null) return JSON.parse(v); } catch (e) { /* ignore */ }
+    return k in mem ? mem[k] : d;
+  },
+  set(k, v) { mem[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
+  del(k) { delete mem[k]; try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+};
+
+class Spotify {
+  constructor(o) {
+    this.clientId = o.clientId;
+    this.fetch = o.fetchFn || ((...a) => fetch(...a));
+    this.sleep = o.sleep || (ms => new Promise(r => setTimeout(r, ms)));
+    this.store = o.store || store;
+    this.onWait = o.onWait || (() => {});
+    this.pauseUntil = 0;
+    this.refreshing = null;
+  }
+  async ensureToken(force) {
+    const t = this.store.get('spf_tok');
+    if (!t) throw new Error('Not connected to Spotify.');
+    if (!force && Date.now() < t.expires_at - 60000) return t.access_token;
+    if (!this.refreshing) this.refreshing = this._refresh(t).finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+  async _refresh(t) {
+    const res = await this.fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: this.clientId }).toString()
+    });
+    if (!res.ok) throw new Error('Spotify sign-in expired. Press Connect Spotify and try again.');
+    const j = await res.json();
+    const nt = { access_token: j.access_token, refresh_token: j.refresh_token || t.refresh_token, expires_at: Date.now() + j.expires_in * 1000 };
+    this.store.set('spf_tok', nt);
+    return nt.access_token;
+  }
+  async call(method, path, o = {}) {
+    const url = 'https://api.spotify.com/v1' + path + (o.query ? '?' + new URLSearchParams(o.query).toString() : '');
+    let tries = 0, refreshed = false;
+    for (;;) {
+      const wait = this.pauseUntil - Date.now();
+      if (wait > 0) await this.sleep(wait);
+      const token = await this.ensureToken(false);
+      let res;
+      try {
+        res = await this.fetch(url, {
+          method,
+          headers: Object.assign({ Authorization: 'Bearer ' + token }, o.body ? { 'Content-Type': 'application/json' } : {}),
+          body: o.body ? JSON.stringify(o.body) : undefined
+        });
+      } catch (e) {
+        if (++tries > 6) throw new Error('Network problem talking to Spotify. Check your connection and press Start again.');
+        this.pauseUntil = Date.now() + Math.min(30000, 1500 * tries);
+        continue;
+      }
+      if (res.status === 429) {
+        const ra = parseInt(res.headers && res.headers.get ? (res.headers.get('Retry-After') || '') : '', 10);
+        const secs = Number.isFinite(ra) ? ra : Math.min(60, 2 ** (tries + 1));
+        if (++tries > 10 || secs > 180) {
+          const e = new Error('Spotify is limiting requests right now' + (secs > 180 ? ' (asked to wait about ' + Math.round(secs / 60) + ' minutes)' : '') +
+            '. Wait a while, then press Start again. Your progress is saved.');
+          e.rateLimited = true; throw e;
+        }
+        this.pauseUntil = Date.now() + secs * 1000;
+        this.onWait(secs);
+        continue;
+      }
+      if (res.status === 401 && !refreshed) { refreshed = true; await this.ensureToken(true); continue; }
+      if (res.status >= 500) {
+        if (++tries > 5) throw new Error('Spotify had a server error (' + res.status + '). Press Start again in a few minutes.');
+        this.pauseUntil = Date.now() + 1500 * tries;
+        continue;
+      }
+      const text = await res.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch (e) { /* empty or non-JSON */ }
+      if (!res.ok) {
+        const msg = (json && json.error && (json.error.message || json.error)) || res.statusText || 'request failed';
+        const e = new Error('Spotify said ' + res.status + ': ' + msg);
+        e.status = res.status; throw e;
+      }
+      return json;
+    }
+  }
+  search(q) { return this.call('GET', '/search', { query: { q, type: 'track', limit: '10' } }); }
+  createPlaylist(name, isPublic) {
+    return this.call('POST', '/me/playlists', { body: { name: name.slice(0, 100), public: !!isPublic, description: 'Moved from Apple Music' } });
+  }
+  addItems(id, uris) { return this.call('POST', '/playlists/' + encodeURIComponent(id) + '/items', { body: { uris } }); }
+  saveLibrary(uris) { return this.call('PUT', '/me/library', { query: { uris: uris.join(',') } }); }
+  me() { return this.call('GET', '/me'); }
+}
+
+async function findTrack(api, t) {
+  const title = queryTitle(t.title), a1 = firstArtist(t.artist);
+  const queries = [];
+  if (a1) { queries.push('track:"' + title + '" artist:"' + a1 + '"'); queries.push(title + ' ' + a1); }
+  else queries.push(title);
+  let best = null;
+  for (const q of queries) {
+    const r = await api.search(q);
+    const pick = pickBest(t, r && r.tracks && r.tracks.items);
+    if (pick && (!best || pick.score > best.score)) best = pick;
+    if (best && best.score >= 0.9) break;
+  }
+  return best && best.score >= THRESHOLD ? best : null;
+}
+
+async function pool(items, n, worker, stop) {
+  let i = 0, err = null;
+  const runners = Array.from({ length: n }, async () => {
+    while (i < items.length && !stop() && !err) {
+      const idx = i++;
+      try { await worker(items[idx], idx); } catch (e) { err = e; }
+    }
+  });
+  await Promise.all(runners);
+  if (err) throw err;
+}
+
+const keyOf = t => (t.title + '\u0001' + t.artist).toLowerCase();
+
+async function runTransfer(o) {
+  const { parsed, opts, api, cache, progress, stop } = o;
+  const tracks = parsed.tracks;
+  const uniq = new Map();
+  tracks.forEach(t => { if (!uniq.has(keyOf(t))) uniq.set(keyOf(t), t); });
+  const todo = [...uniq.entries()].filter(([k]) => !(k in cache));
+  const total = uniq.size;
+  let done = total - todo.length, sinceSave = 0;
+  progress({ phase: 'match', done, total });
+
+  await pool(todo, 3, async ([k, t]) => {
+    let hit = null;
+    try { hit = await findTrack(api, t); }
+    catch (e) { if (e.status === 400 || e.status === 404) hit = null; else throw e; }
+    cache[k] = hit ? { uri: hit.uri, name: hit.name, artist: hit.artist } : null;
+    done++;
+    if (++sinceSave >= 25) { o.saveCache(); sinceSave = 0; }
+    progress({ phase: 'match', done, total });
+  }, stop);
+  o.saveCache();
+  if (stop()) return { stopped: true };
+
+  const unmatched = [], liked = new Set(), plMap = new Map();
+  for (const t of tracks) {
+    const h = cache[keyOf(t)];
+    if (!h) { unmatched.push(t); continue; }
+    if (!t.playlist) { if (opts.likedLoose) liked.add(h.uri); }
+    else {
+      const name = t.playlist.slice(0, 100) || 'Untitled playlist';
+      if (!plMap.has(name)) plMap.set(name, []);
+      plMap.get(name).push(h.uri);
+      if (opts.likedAll) liked.add(h.uri);
+    }
+  }
+  const likedArr = [...liked];
+  const totalSteps = Math.ceil(likedArr.length / 40) + [...plMap.values()].reduce((s, a) => s + Math.ceil(a.length / 100) + 1, 0);
+  let step = 0;
+  const tick = () => progress({ phase: 'write', done: Math.min(++step, totalSteps), total: totalSteps });
+  progress({ phase: 'write', done: 0, total: totalSteps });
+
+  for (let i = 0; i < likedArr.length; i += 40) {
+    if (stop()) return { stopped: true };
+    await api.saveLibrary(likedArr.slice(i, i + 40));
+    tick();
+  }
+  const created = o.store.get('spf_created', {});
+  let madeLists = 0;
+  for (const [name, uris] of plMap) {
+    if (stop()) return { stopped: true };
+    let rec = created[name];
+    if (!rec) {
+      const pl = await api.createPlaylist(name, !opts.private);
+      rec = { id: pl.id, added: 0 };
+      created[name] = rec;
+      o.store.set('spf_created', created);
+    }
+    madeLists++;
+    tick();
+    for (let i = rec.added; i < uris.length; i += 100) {
+      if (stop()) return { stopped: true };
+      await api.addItems(rec.id, uris.slice(i, i + 100));
+      rec.added = Math.min(uris.length, i + 100);
+      o.store.set('spf_created', created);
+      tick();
+    }
+  }
+  o.store.del('spf_created');
+  return {
+    unmatched,
+    stats: { songs: tracks.length, matched: tracks.length - unmatched.length, unmatched: unmatched.length, playlists: madeLists, liked: likedArr.length }
+  };
+}
+
+/* ---------- Spotify sign-in (PKCE) ---------- */
+const SCOPES = 'playlist-modify-private playlist-modify-public user-library-modify';
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function randStr(n) {
+  const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const a = crypto.getRandomValues(new Uint8Array(n));
+  return Array.from(a, x => cs[x % cs.length]).join('');
+}
+function redirectUri() { return location.origin + location.pathname.replace(/index\.html$/, ''); }
+
+async function startAuth(clientId) {
+  const verifier = randStr(96);
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  store.set('spf_verifier', verifier);
+  store.set('spf_client', clientId);
+  const p = new URLSearchParams({
+    client_id: clientId, response_type: 'code', redirect_uri: redirectUri(),
+    code_challenge_method: 'S256', code_challenge: challenge, scope: SCOPES
+  });
+  location.href = 'https://accounts.spotify.com/authorize?' + p.toString();
+}
+
+async function finishAuth(code) {
+  const verifier = store.get('spf_verifier'), clientId = store.get('spf_client');
+  if (!verifier || !clientId) throw new Error('The sign-in session was lost. Press Connect Spotify to try again.');
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), client_id: clientId, code_verifier: verifier }).toString()
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error('Spotify sign-in failed: ' + (j.error_description || j.error || res.status));
+  store.set('spf_tok', { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + j.expires_in * 1000 });
+  store.del('spf_verifier');
+}
+
+/* ==== UI ==== */
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString();
+let parsed = { tracks: [], skipped: [] }, connected = false, running = false, stopFlag = false, wakeLock = null;
+
+function setConn(msg, bad) { const e = $('connStatus'); e.textContent = msg; e.className = bad ? 'err' : 'muted'; }
+function setStatus(msg, bad) { const e = $('status'); e.textContent = msg; e.className = bad ? 'err' : 'muted'; }
+function log(msg) { const l = $('log'); l.textContent += msg + '\n'; l.scrollTop = l.scrollHeight; }
+
+function updateGates() {
+  $('s2').classList.toggle('locked', !connected);
+  $('s3').classList.toggle('locked', !connected);
+  $('startBtn').disabled = !(connected && parsed.tracks.length && !running);
+  $('stopBtn').classList.toggle('hidden', !running);
+  $('connectBtn').classList.toggle('hidden', connected);
+  $('disconnectBtn').classList.toggle('hidden', !connected);
+}
+
+async function refreshConn() {
+  const tok = store.get('spf_tok'), cid = store.get('spf_client');
+  if (!tok || !cid) { connected = false; updateGates(); return; }
+  try {
+    const me = await new Spotify({ clientId: cid }).me();
+    connected = true;
+    setConn('Connected' + (me && me.display_name ? ' as ' + me.display_name : '') + '.');
+  } catch (e) {
+    connected = false;
+    setConn(e.status === 403
+      ? 'Spotify refused access (403). Check that your Spotify Premium is active and the app is set up under the same account.'
+      : e.message, true);
+  }
+  updateGates();
+}
+
+function onText() {
+  parsed = parseInput($('paste').value);
+  const lists = new Set(parsed.tracks.filter(t => t.playlist).map(t => t.playlist)).size;
+  const loose = parsed.tracks.filter(t => !t.playlist).length;
+  if (!parsed.tracks.length && !parsed.skipped.length) { $('summary').textContent = ''; }
+  else {
+    let s = fmt(parsed.tracks.length) + ' songs found: ' + fmt(loose) + ' not in a playlist, ' + fmt(parsed.tracks.length - loose) + ' in ' + fmt(lists) + ' playlists.';
+    if (parsed.skipped.length) s += ' ' + fmt(parsed.skipped.length) + ' lines could not be read, for example: ' + parsed.skipped.slice(0, 2).join(' / ').slice(0, 120);
+    $('summary').textContent = s;
+  }
+  updateGates();
+}
+
+function onProgress(p) {
+  const frac = p.total ? p.done / p.total : 1;
+  const pct = p.phase === 'match' ? frac * 85 : 85 + frac * 15;
+  $('barFill').style.width = pct.toFixed(1) + '%';
+  setStatus(p.phase === 'match' ? 'Finding songs on Spotify: ' + fmt(p.done) + ' of ' + fmt(p.total) : 'Saving to Spotify: step ' + fmt(p.done) + ' of ' + fmt(p.total));
+}
+
+async function lockScreen() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* ignore */ } }
+async function unlockScreen() { try { if (wakeLock) await wakeLock.release(); } catch (e) { /* ignore */ } wakeLock = null; }
+
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (x) { /* ignore */ } ta.remove(); }
+  if (btn) { const old = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = old; }, 1500); }
+}
+
+function showResults(res) {
+  $('s4').classList.remove('hidden');
+  const s = res.stats;
+  $('resultText').textContent = 'Matched ' + fmt(s.matched) + ' of ' + fmt(s.songs) + ' songs. Created ' + fmt(s.playlists) + ' playlists and saved ' + fmt(s.liked) + ' songs to Liked Songs.';
+  if (res.unmatched.length) {
+    $('unmatchedWrap').classList.remove('hidden');
+    $('unmatched').value = res.unmatched.map(t => t.title + ' | ' + t.artist + (t.album ? ' | ' + t.album : '') + (t.playlist ? '   [' + t.playlist + ']' : '')).join('\n');
+  } else $('unmatchedWrap').classList.add('hidden');
+  $('s4').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function start() {
+  running = true; stopFlag = false; updateGates();
+  $('log').textContent = ''; $('s4').classList.add('hidden'); $('barFill').style.width = '0%';
+  await lockScreen();
+  try {
+    const api = new Spotify({ clientId: store.get('spf_client'), onWait: s => setStatus('Spotify asked us to slow down. Waiting ' + s + ' seconds.') });
+    const cache = store.get('spf_cache', {});
+    const opts = { likedLoose: $('optLoose').checked, likedAll: $('optAll').checked, private: $('optPrivate').checked };
+    const res = await runTransfer({ parsed, opts, api, cache, store, saveCache: () => store.set('spf_cache', cache), progress: onProgress, stop: () => stopFlag });
+    if (res.stopped) setStatus('Stopped. Press Start to continue where it left off.');
+    else { $('barFill').style.width = '100%'; setStatus('Done.'); $('status').className = 'ok'; showResults(res); }
+  } catch (e) {
+    setStatus(e.message, true);
+    log(e.message);
+  } finally {
+    running = false; await unlockScreen(); updateGates();
+  }
+}
+
+$('redirect').textContent = redirectUri();
+$('clientId').value = store.get('spf_client', '') || '';
+$('copyRedirect').onclick = e => copyText(redirectUri(), e.currentTarget);
+$('connectBtn').onclick = () => {
+  const id = $('clientId').value.trim();
+  if (!/^[A-Za-z0-9]{20,}$/.test(id)) { setConn('Paste the Client ID from your Spotify app first (a long string of letters and numbers).', true); return; }
+  startAuth(id).catch(e => setConn(e.message, true));
+};
+$('disconnectBtn').onclick = () => { store.del('spf_tok'); connected = false; setConn('Disconnected.'); updateGates(); };
+$('file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { $('paste').value = decodeBuffer(await f.arrayBuffer()); onText(); } catch (x) { $('summary').textContent = 'Could not read that file.'; }
+};
+let pasteTimer = null;
+$('paste').oninput = () => { clearTimeout(pasteTimer); pasteTimer = setTimeout(onText, 250); };
+$('startBtn').onclick = start;
+$('stopBtn').onclick = () => { stopFlag = true; setStatus('Stopping after the current step.'); };
+$('resetBtn').onclick = () => { store.del('spf_cache'); store.del('spf_created'); setStatus('Saved matches cleared.'); };
+$('copyUnmatched').onclick = e => copyText($('unmatched').value, e.currentTarget);
+document.addEventListener('visibilitychange', () => { if (running && document.visibilityState === 'visible') lockScreen(); });
+
+(async function init() {
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('error')) setConn('Spotify did not allow the connection: ' + qs.get('error'), true);
+  if (qs.get('code')) {
+    try { await finishAuth(qs.get('code')); } catch (e) { setConn(e.message, true); }
+    history.replaceState(null, '', redirectUri());
+  }
+  await refreshConn();
+})();
+</script>
+</body>
+</html>
