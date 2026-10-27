@@ -111,11 +111,11 @@ Not in a playlist | Some Artist</pre>
   <label class="check"><input type="checkbox" id="optPrivate" checked><span>Make new playlists private</span></label>
   <label for="speed">Speed</label>
   <select id="speed">
-    <option value="1500" selected>Slow (safest, recommended)</option>
-    <option value="900">Medium</option>
-    <option value="500">Fast (may hit Spotify's limits)</option>
+    <option value="4000" selected>Patient (recommended): about 4 seconds per lookup</option>
+    <option value="2000">Slow: about 2 seconds per lookup</option>
+    <option value="1000">Medium: about 1 second per lookup</option>
   </select>
-  <p class="muted" style="margin-top:12px">Keep this page open with the screen on while it runs. iPhone pauses pages in the background. If it gets interrupted, open the page and press Start again: matches already found are kept.</p>
+  <p class="muted" style="margin-top:12px">If Spotify limits you, this page waits by itself (sometimes for hours) and then carries on. You don't need to press anything. Keep the page open with the screen on, and plug in your phone. If the page is closed or interrupted, open it again: your song list and the matches found so far are remembered, so just press Start.</p>
   <div class="row">
     <button id="startBtn" type="button" disabled>Start transfer</button>
     <button id="stopBtn" class="ghost hidden" type="button">Stop</button>
@@ -333,20 +333,31 @@ class Spotify {
     this.sleep = o.sleep || (ms => new Promise(r => setTimeout(r, ms)));
     this.store = o.store || store;
     this.onWait = o.onWait || (() => {});
-    this.pauseUntil = 0;
+    this.onCountdown = o.onCountdown || (() => {});
+    this.stopFn = o.stopFn || (() => false);
+    this.limitStreak = 0;
+    this.pauseUntil = Math.max(0, Number(this.store.get('spf_cool', 0)) || 0);
     this.refreshing = null;
     this.baseGap = o.minGap || 0;
     this.minGap = this.baseGap;
     this.nextAt = 0;
     this.okStreak = 0;
   }
+  async waitUntil(ts, announce) {
+    for (;;) {
+      const left = ts - Date.now();
+      if (left <= 0) return;
+      if (this.stopFn()) { const e = new Error('Stopped.'); e.stopped = true; throw e; }
+      if (announce) this.onCountdown(Math.ceil(left / 1000), ts);
+      await this.sleep(Math.min(1000, left));
+    }
+  }
   async gate() {
-    const wait = this.pauseUntil - Date.now();
-    if (wait > 0) await this.sleep(wait);
+    if (this.pauseUntil > Date.now()) await this.waitUntil(this.pauseUntil, true);
     const now = Date.now();
     const at = Math.max(now, this.nextAt);
     this.nextAt = at + this.minGap;
-    if (at > now) await this.sleep(at - now);
+    if (at > now) await this.waitUntil(at, false);
   }
   async ensureToken(force) {
     const t = this.store.get('spf_tok');
@@ -386,18 +397,18 @@ class Spotify {
         continue;
       }
       if (res.status === 429) {
+        // Never give up: wait (30s, 1m, 2m, 5m, 10m, 20m, then 30m at a time) and try again.
+        const ladder = [30, 60, 120, 300, 600, 1200, 1800];
+        this.limitStreak++;
         const ra = parseInt(res.headers && res.headers.get ? (res.headers.get('Retry-After') || '') : '', 10);
-        const secs = Number.isFinite(ra) ? ra : 30;
-        this.minGap = Math.min(6000, Math.round(Math.max(this.minGap, 500) * 1.5));
+        let secs = Number.isFinite(ra) && ra > 0 ? ra : ladder[Math.min(this.limitStreak - 1, ladder.length - 1)];
+        secs = Math.min(secs, 48 * 3600);
+        this.minGap = Math.min(10000, Math.round(Math.max(this.minGap, 1000) * 1.5));
         this.okStreak = 0;
-        if (++tries > 10 || secs > 180) {
-          const e = new Error('Spotify is limiting requests right now' + (secs > 180 ? ' (asked to wait about ' + Math.round(secs / 60) + ' minutes)' : '') +
-            '. Wait a while, then press Start again. Your progress is saved.');
-          e.rateLimited = true; throw e;
-        }
         this.pauseUntil = Date.now() + secs * 1000;
         this.nextAt = Math.max(this.nextAt, this.pauseUntil);
-        this.onWait(secs);
+        this.store.set('spf_cool', this.pauseUntil);
+        this.onWait(secs, this.pauseUntil);
         continue;
       }
       if (res.status === 401 && !refreshed) { refreshed = true; await this.ensureToken(true); continue; }
@@ -414,6 +425,7 @@ class Spotify {
         const e = new Error('Spotify said ' + res.status + ': ' + msg);
         e.status = res.status; throw e;
       }
+      if (this.limitStreak) { this.limitStreak = 0; this.store.set('spf_cool', 0); }
       if (++this.okStreak >= 25) { this.okStreak = 0; this.minGap = Math.max(this.baseGap, Math.round(this.minGap * 0.9)); }
       return json;
     }
@@ -437,7 +449,7 @@ async function findTrack(api, t) {
     const r = await api.search(q);
     const pick = pickBest(t, r && r.tracks && r.tracks.items);
     if (pick && (!best || pick.score > best.score)) best = pick;
-    if (best && best.score >= 0.9) break;
+    if (best && best.score >= THRESHOLD) break;
   }
   return best && best.score >= THRESHOLD ? best : null;
 }
@@ -456,7 +468,7 @@ async function pool(items, n, worker, stop) {
 
 const keyOf = t => (t.title + '\u0001' + t.artist).toLowerCase();
 
-async function runTransfer(o) {
+async function runTransferInner(o) {
   const { parsed, opts, api, cache, progress, stop } = o;
   const tracks = parsed.tracks;
   const uniq = new Map();
@@ -527,6 +539,11 @@ async function runTransfer(o) {
     unmatched,
     stats: { songs: tracks.length, matched: tracks.length - unmatched.length, unmatched: unmatched.length, playlists: madeLists, liked: likedArr.length }
   };
+}
+
+async function runTransfer(o) {
+  try { return await runTransferInner(o); }
+  catch (e) { if (e && e.stopped) return { stopped: true }; throw e; }
 }
 
 /* ---------- Spotify sign-in (PKCE) ---------- */
@@ -655,12 +672,23 @@ async function start() {
   runT0 = Date.now(); runD0 = null;
   await lockScreen();
   try {
-    const api = new Spotify({ clientId: store.get('spf_client'), minGap: parseInt($('speed').value, 10) || 1500, onWait: s => setStatus('Spotify asked us to slow down. Pausing about ' + s + ' seconds, then continuing at a slower pace. You do not need to do anything.') });
+    const api = new Spotify({
+      clientId: store.get('spf_client'),
+      minGap: parseInt($('speed').value, 10) || 4000,
+      stopFn: () => stopFlag,
+      onWait: () => {},
+      onCountdown: (left, ts) => {
+        const m = Math.floor(left / 60), sec = String(left % 60).padStart(2, '0');
+        const at = new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        setStatus('Spotify is limiting requests, so we are waiting. Resuming in ' + (m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ':' + sec) + ' (about ' + at + '). Nothing is wrong. Leave this page open.');
+      }
+    });
     const cache = store.get('spf_cache', {});
     const opts = { likedLoose: $('optLoose').checked, likedAll: $('optAll').checked, private: $('optPrivate').checked, concurrency: 1 };
+    store.set('spf_job', { tracks: parsed.tracks, opts, speed: $('speed').value });
     const res = await runTransfer({ parsed, opts, api, cache, store, saveCache: () => store.set('spf_cache', cache), progress: onProgress, stop: () => stopFlag });
     if (res.stopped) setStatus('Stopped. Press Start to continue where it left off.');
-    else { $('barFill').style.width = '100%'; setStatus('Done.'); $('status').className = 'ok'; showResults(res); }
+    else { $('barFill').style.width = '100%'; setStatus('Done.'); $('status').className = 'ok'; store.del('spf_job'); showResults(res); }
   } catch (e) {
     setStatus(e.message, true);
     log(e.message);
@@ -698,6 +726,14 @@ document.addEventListener('visibilitychange', () => { if (running && document.vi
     history.replaceState(null, '', redirectUri());
   }
   await refreshConn();
+  const job = store.get('spf_job');
+  if (job && job.tracks && job.tracks.length && !parsed.tracks.length) {
+    parsed = { tracks: job.tracks, skipped: [] };
+    if (job.opts) { $('optLoose').checked = !!job.opts.likedLoose; $('optAll').checked = !!job.opts.likedAll; $('optPrivate').checked = !!job.opts.private; }
+    if (job.speed) $('speed').value = job.speed;
+    $('summary').textContent = 'Unfinished transfer restored: ' + fmt(parsed.tracks.length) + ' songs. Press Start transfer to continue. Songs already matched are skipped.';
+    updateGates();
+  }
 })();
 </script>
 </body>
